@@ -10,7 +10,6 @@ import (
 	"github.com/ztino/jd_seckill/log"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"time"
 )
@@ -44,24 +43,11 @@ func startSeckill(cmd *cobra.Command, args []string) {
 			//获取本地时间与京东云端时间差
 			diffTime := seckill.GetDiffTime()
 
-			//获取抢购时间
-			buyDate := common.Config.MustValue("config", "buy_time", "")
-			buyTimeReg := regexp.MustCompile(`(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})`)
-			buyTimeArr := buyTimeReg.FindAllString(buyDate, 1)
-			if len(buyTimeArr) == 1 {
-				buyDate = buyTimeArr[0]
-			} else {
-				_, buyTimeArr, err := seckill.GetWareBusiness()
-				if err != nil || len(buyTimeArr) != 2 {
-					log.Println("请设置conf.ini中的抢购时间(buy_time)")
-					os.Exit(0)
-				}
-				buyDate = buyTimeArr[0] + ":00"
-			}
-
 			//计算抢购时间
 			loc, _ := time.LoadLocation("Local")
-			t, _ := time.ParseInLocation("2006-01-02 15:04:05", buyDate, loc)
+			now := time.Now()
+			t := time.Date(now.Year(), now.Month(), now.Day(), 9, 59, 59, 0, loc)
+			buyDate := t.Format(common.DateTimeFormatStr)
 			buyTime := t.UnixNano()/1e6 + diffTime
 
 			//抢购总时间读取配置文件
@@ -95,49 +81,49 @@ func startSeckill(cmd *cobra.Command, args []string) {
 	}
 }
 
-func GetJdTime() (int64,error) {
-	req:=httpc.NewRequest(common.Client)
-	resp,body,err:=req.SetUrl("https://a.jd.com//ajax/queryServerData.html").SetMethod("get").Send().End()
-	if err!=nil || resp.StatusCode!=http.StatusOK {
+func GetJdTime() (int64, error) {
+	req := httpc.NewRequest(common.Client)
+	resp, body, err := req.SetUrl("https://a.jd.com//ajax/queryServerData.html").SetMethod("get").Send().End()
+	if err != nil || resp.StatusCode != http.StatusOK {
 		log.Println("获取京东服务器时间失败")
-		return 0,errors.New("获取京东服务器时间失败")
+		return 0, errors.New("获取京东服务器时间失败")
 	}
-	return gjson.Get(body,"serverTime").Int(),nil
+	return gjson.Get(body, "serverTime").Int(), nil
 }
 
-func Start(seckill *jd_seckill.Seckill,taskNum int)  {
+func Start(seckill *jd_seckill.Seckill, taskNum int) {
 	//抢购总时间读取配置文件
-	str:=common.Config.MustValue("config","seckill_time","2")
-	seckillTime,_:=strconv.Atoi(str)
-	seckillTotalTime:=time.Now().Add(time.Duration(seckillTime)*time.Minute).Unix()
+	str := common.Config.MustValue("config", "seckill_time", "2")
+	seckillTime, _ := strconv.Atoi(str)
+	seckillTotalTime := time.Now().Add(time.Duration(seckillTime) * time.Minute).Unix()
 	//抢购间隔时间读取配置文件
-	str=common.Config.MustValue("config","ticker_time","1500")
-	tickerTime,_:=strconv.Atoi(str)
+	str = common.Config.MustValue("config", "ticker_time", "1500")
+	tickerTime, _ := strconv.Atoi(str)
 	//开始检测抢购状态
 	go CheckSeckillStatus()
 	//抢购总时间超时程序自动退出
-	for time.Now().Unix()<seckillTotalTime {
-		for i:=1;i<=taskNum;i++ {
+	for time.Now().Unix() < seckillTotalTime {
+		for i := 1; i <= taskNum; i++ {
 			go task(seckill)
 		}
 		//怕封号的可以增加间隔时间,相反抢到的成功率也减低了
-		time.Sleep(time.Duration(tickerTime)*time.Millisecond)
+		time.Sleep(time.Duration(tickerTime) * time.Millisecond)
 	}
 	log.Println("抢购结束，具体详情请查看日志")
 }
 
-func task(seckill *jd_seckill.Seckill)  {
+func task(seckill *jd_seckill.Seckill) {
 	seckill.RequestSeckillUrl()
 	seckill.SeckillPage()
-	flag:=seckill.SubmitSeckillOrder()
+	flag := seckill.SubmitSeckillOrder()
 	//提前抢购成功的,直接结束程序
 	if flag {
 		//通知管道
-		common.SeckillStatus<-true
+		common.SeckillStatus <- true
 	}
 }
 
-func CheckSeckillStatus()  {
+func CheckSeckillStatus() {
 	for {
 		select {
 		case <-common.SeckillStatus:
@@ -147,14 +133,14 @@ func CheckSeckillStatus()  {
 	}
 }
 
-func KeepSession(user *jd_seckill.User)  {
+func KeepSession(user *jd_seckill.User) {
 	//每30分钟检测一次
-	t:=time.NewTicker(30*time.Minute)
+	t := time.NewTicker(30 * time.Minute)
 	for {
 		select {
 		case <-t.C:
-			if err:=user.RefreshStatus();err!=nil {
-				_=os.Remove("./cookie.txt")
+			if err := user.RefreshStatus(); err != nil {
+				_ = os.Remove("./cookie.txt")
 				log.Println("会话失效,程序自动退出")
 				os.Exit(0)
 			}
