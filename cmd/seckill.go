@@ -10,6 +10,7 @@ import (
 	"github.com/ztino/jd_seckill/log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 )
@@ -43,9 +44,32 @@ func startSeckill(cmd *cobra.Command, args []string) {
 			//获取本地时间与京东云端时间差
 			diffTime := seckill.GetDiffTime()
 
+			//获取抢购时间
+			buyDateFromConfig := common.Config.MustValue("config", "buy_time", "")
+			buyTimeReg := regexp.MustCompile(`(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})`)
+			buyTimeArr := buyTimeReg.FindAllString(buyDateFromConfig, 1)
+			if len(buyTimeArr) == 1 {
+				buyDateFromConfig = buyTimeArr[0]
+			} else {
+				_, buyTimeArr, err := seckill.GetWareBusiness()
+				if err != nil || len(buyTimeArr) != 2 {
+					log.Println("请设置conf.ini中的抢购时间(buy_time)")
+					os.Exit(0)
+				}
+				buyDateFromConfig = buyTimeArr[0] + ":00"
+			}
+
 			//计算抢购时间
 			loc, _ := time.LoadLocation("Local")
 			now := time.Now()
+			ct, _ := time.ParseInLocation(common.DateTimeFormatStr, buyDateFromConfig, loc)
+			if now.Day() < ct.Day() {
+				log.Println("未到抢购日期，程序退出")
+				os.Exit(0)
+			} else if now.Day() > ct.Day() {
+				log.Println("conf.ini 配置的buy_time错误")
+				os.Exit(0)
+			}
 			t := time.Date(now.Year(), now.Month(), now.Day(), 9, 59, 59, 0, loc)
 			buyDate := t.Format(common.DateTimeFormatStr)
 			buyTime := t.UnixNano()/1e6 + diffTime
